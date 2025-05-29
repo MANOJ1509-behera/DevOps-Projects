@@ -1,0 +1,69 @@
+stages:
+    - sonarqube-check
+    - build
+    - push
+    - deploy
+
+variables:
+    DOCKER_IMAGE: college_app
+
+
+sonarqube-check:
+  stage: sonarqube-check
+  image: 
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: [""]
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
+    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  script: 
+    - sonar-scanner
+  allow_failure: true
+  only:
+    - master
+
+build-stage:
+     stage: build
+     image: docker:latest
+     services:
+         - docker:dind
+     script:
+         - echo "Building Docker images"
+         - docker build -t $DOCKER_IMAGE .
+         - docker save -o docker_image.tar $DOCKER_IMAGE
+     artifacts:
+         paths:
+             - docker_image.tar
+
+push:
+  stage: push
+  image: docker:latest
+  services:
+      - docker:dind
+  dependencies:
+      - build-stage
+  script:
+    - echo "Login to DockerHub"
+    - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+    - echo "Loading the Docker image"
+    - docker load -i docker_image.tar
+    - echo "Tagging Docker image"
+    - docker tag $DOCKER_IMAGE $DOCKER_USERNAME/$DOCKER_IMAGE
+    - echo "Pushing docker image"
+    - docker push $DOCKER_USERNAME/$DOCKER_IMAGE
+
+deploy:
+  stage: deploy
+  script:
+    - echo "deploy to kubernetes cluster using helm"
+    - helm install collegeapp ./helm-chart --set image.repository=$DOCKER_USERNAME/$DOCKER_IMAGE --set image.tag=latest
+  tags:
+    - master_runner
+
+  
+    
+
